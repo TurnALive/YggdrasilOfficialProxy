@@ -85,6 +85,18 @@ object YggdrasilOfficialProxy {
             append("/profiles/minecraft")
         }
     }
+    val skinProfiles by lazy {
+        buildString {
+            if (CDN_enable) {
+                append(CDN_origin_link)
+                append("/sessionserver")
+            } else {
+                append("https://sessionserver.")
+                append("mojang.com")
+            }
+            append("/session/minecraft/profile")
+        }
+    }
 
     val output = System.out
 
@@ -530,6 +542,82 @@ object YggdrasilOfficialProxy {
                                 get() = resp.status
                             override val contentType: ContentType
                                 get() = ContentType("application", "json; charset=utf8")
+                        })
+                    }
+                    getCatching("sessionserver/session/minecraft/profile/{uuid}") get@{
+                        WrappedLogger.trace("Fetching game profile")
+
+                        val uuid: String = call.parameters["uuid"]!!
+
+                        val officialDeferred = async(Dispatchers.IO) {
+                            runCatching {
+                                WrappedLogger.trace("Requesting official game profile")
+                                val response: HttpResponse = yggdrasilClient.get(
+                                        url = URLBuilder().apply {
+                                            takeFrom("$skinProfiles/$uuid")
+                                            parameters.append("unsigned", "false")
+                                        }.build().also {
+                                            WrappedLogger.trace("URL: $it")
+                                        }
+                                )
+
+                                if (response.status.value == 200) {
+                                    WrappedLogger.trace("Got response from official!")
+                                    return@async response
+                                }
+                            }.onFailure { WrappedLogger.trace("Official error", t = it) }
+                            return@async null
+                        }
+                        val yggdrasilDeferred = async(Dispatchers.IO) {
+                            runCatching {
+                                WrappedLogger.trace("Requesting yggdrasil game profile")
+                                val response: HttpResponse = yggdrasilClient.get(
+                                        url = URLBuilder().apply {
+                                            takeFrom("$baseAPI/sessionserver/session/minecraft/profile/$uuid")
+                                            parameters.append("unsigned", "false")
+                                        }.build().also {
+                                            WrappedLogger.trace("URL: $it")
+                                        }
+                                )
+
+                                if (response.status.value == 200) {
+                                    WrappedLogger.trace("Got response from yggdrasil!")
+                                    return@async response
+                                }
+                            }.onFailure { WrappedLogger.trace("Yggdrasil error", t = it) }
+                            return@async null
+                        }
+
+                        val officialResponse = officialDeferred.await()
+                        val yggdrasilResponse = yggdrasilDeferred.await()
+                        val firstResponse: HttpResponse?
+                        val secondResponse: HttpResponse?
+                        if (officialFirst) {
+                            WrappedLogger.trace("I'll use official first")
+                            firstResponse = officialResponse
+                            secondResponse = yggdrasilResponse
+                        } else {
+                            WrappedLogger.trace("I'll use yggdrasil first")
+                            firstResponse = yggdrasilResponse
+                            secondResponse = officialResponse
+                        }
+
+                        val resp = if (firstResponse ?: secondResponse == null) {
+                            WrappedLogger.trace("Nope")
+                            NoContextResponse
+                        } else {
+                            firstResponse ?: secondResponse!!
+                        }
+
+                        this.call.respond(object : OutgoingContent.ReadChannelContent() {
+                            override fun readFrom(): ByteReadChannel {
+                                return resp.content
+                            }
+
+                            override val status: HttpStatusCode
+                                get() = resp.status
+                            override val contentType: ContentType?
+                                get() = resp.contentType()
                         })
                     }
                     getCatching {

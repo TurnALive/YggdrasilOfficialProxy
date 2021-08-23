@@ -25,3 +25,7 @@ jobs:
       run: chmod +x gradlew
     - name: Build with Gradle
       run: ./gradlew standardShadowJar
+    - name: Upload a Build Artifact
+      uses: actions/upload-artifact@v2.2.4
+      with:
+        path: build/libs/YggdrasilOfficialProxy-2.3.0-proxy.jar
